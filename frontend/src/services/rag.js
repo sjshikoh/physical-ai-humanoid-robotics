@@ -1,6 +1,6 @@
 // frontend/src/services/rag.js
 
-const RAG_ENDPOINT = 'http://localhost:8000/rag/query';
+const RAG_ENDPOINT = 'https://shajarain-ai-backend.hf.space/rag/query';
 
 /**
  * Sends a user query to the RAG backend and returns the response.
