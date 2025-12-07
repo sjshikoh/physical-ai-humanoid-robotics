@@ -15,15 +15,15 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://shaista.github.io',
+  url: 'https://sjshikoh.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/physical-ai-humanoid-robotic/',
+  baseUrl: '/physical-ai-humanoid-robotics/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'shaista', // Usually your GitHub org/user name.
-  projectName: 'physical-ai-humanoid-robotic', // Usually your repo name.
+  organizationName: 'sjshikoh', // Usually your GitHub org/user name.
+  projectName: 'physical-ai-humanoid-robotics', // Usually your repo name.
 
   onBrokenLinks: 'throw',
 
