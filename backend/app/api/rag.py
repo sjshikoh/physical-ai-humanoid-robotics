@@ -4,24 +4,36 @@ from typing import List, Set
 from qdrant_client import QdrantClient
 from datetime import datetime
 import os
-import sys
 from dotenv import load_dotenv
-# Add backend root path so we can import embeddings.py
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
-from embeddings import get_embedding
 
+from .embeddings import get_embedding
 
+# NEW: Google Gemini
+import google.generativeai as genai
 
 load_dotenv()
 router = APIRouter()
 
-# Qdrant setup
-
+# -----------------------
+# QDRANT SETUP
+# -----------------------
 qdrant_client = QdrantClient(
-    url=os.getenv("QDRANT_URL"), 
+    url=os.getenv("QDRANT_URL"),
     api_key=os.getenv("QDRANT_API_KEY")
 )
 QDRANT_COLLECTION_NAME = "my_book"
+
+# -----------------------
+# GOOGLE GEMINI SETUP
+# -----------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    print("⚠️ WARNING: GEMINI_API_KEY not set — RAG will return chunks only.")
+
+# Gemini model
+GEMINI_MODEL = "gemini-2.5-flash"
 
 
 # -----------------------
@@ -33,26 +45,29 @@ class QueryRequest(BaseModel):
 
 class RAGResponse(BaseModel):
     response_text: str
+    retrieved_chunks: List[str]
     source_chapters: List[str]
     timestamp: str
 
 
 # -----------------------
-# RAG Query Endpoint
+# RAG Endpoint
 # -----------------------
 
 @router.post("/query", response_model=RAGResponse)
 async def rag_query(request: QueryRequest):
-
     """
-    RAG endpoint: searches Qdrant using the query text and returns
-    the best matching chunks + their chapter names.
+    Full RAG pipeline:
+    - Embed query
+    - Retrieve top 3 chunks from Qdrant
+    - Send chunks + query to Gemini
+    - Return LLM answer + chapter sources
     """
     try:
-        # 1. Embed the query
+        # 1. Embed query
         query_embedding = get_embedding(request.text)
 
-        # 2. Search collection (top 3 chunks)
+        # 2. Search Qdrant
         search_result = qdrant_client.search(
             collection_name=QDRANT_COLLECTION_NAME,
             query_vector=query_embedding,
@@ -60,35 +75,71 @@ async def rag_query(request: QueryRequest):
             with_payload=True
         )
 
-        response_text_chunks = []
+        chunks = []
         source_chapters: Set[str] = set()
 
-        # 3. Extract payload fields YOU ACTUALLY STORED
         for hit in search_result:
             if not hit.payload:
                 continue
 
-            # The chunk text
             if "text" in hit.payload:
-                response_text_chunks.append(hit.payload["text"])
+                chunks.append(hit.payload["text"])
 
-            # Chapter file name (e.g. 5-vision-language-action.md)
             if "chapter" in hit.payload:
                 source_chapters.add(hit.payload["chapter"])
 
-        # Combine retrieved chunk text
-        combined_response_text = " ".join(response_text_chunks).strip()
+        # Edge case: No data retrieved
+        if not chunks:
+            return RAGResponse(
+                response_text="No relevant sections found in the book.",
+                retrieved_chunks=[],
+                source_chapters=[],
+                timestamp=datetime.utcnow().isoformat() + "Z"
+            )
 
-        # Generate timestamp
-        current_timestamp = datetime.utcnow().isoformat(timespec='milliseconds') + "Z"
+        # ------------------------------------------
+        # 3. Build prompt for Gemini LLM
+        # ------------------------------------------
+
+        context_text = "\n\n".join(chunks)
+
+        prompt = f"""
+You are a helpful textbook assistant. You answer ONLY based on the provided context.
+
+USER QUESTION:
+{request.text}
+
+CONTEXT TEXT (from the textbook):
+{context_text}
+
+RULES:
+- If the answer is not in the context, reply: "The book does not contain the answer."
+- Do NOT hallucinate.
+- Keep answers short, factual, and based ONLY on the context.
+"""
+
+        # ------------------------------------------
+        # 4. Generate Answer (Gemini)
+        # ------------------------------------------
+
+        if GEMINI_API_KEY:
+            model = genai.GenerativeModel(GEMINI_MODEL)
+            llm_response = model.generate_content(prompt)
+            answer_text = llm_response.text
+        else:
+            answer_text = "Gemini API key missing. Returning raw chunks only."
+
+        # 5. Timestamp
+        timestamp = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
 
         return RAGResponse(
-            response_text=combined_response_text,
+            response_text=answer_text,
+            retrieved_chunks=chunks,
             source_chapters=sorted(list(source_chapters)),
-            timestamp=current_timestamp
+            timestamp=timestamp
         )
 
     except Exception as e:
-        print(f"RAG ERROR: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+        print("RAG ERROR:", e)
+        raise HTTPException(status_code=500, detail=str(e))
 

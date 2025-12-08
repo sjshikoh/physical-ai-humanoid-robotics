@@ -7,6 +7,7 @@ app = FastAPI()
 
 origins = [
     "http://localhost:3000",  # Docusaurus frontend
+    "https://sjshikoh.github.io",
 ]
 
 app.add_middleware(
